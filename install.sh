@@ -9,19 +9,9 @@ keys_file="${UEK_KEYS_FILE:-/etc/uek-radar/keys.env}"
 fail() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || fail 'Запустите установщик через sudo.'
 [[ -f "$source_dir/compose.yaml" && -f "$source_dir/Dockerfile" ]] || fail 'В пакете нет файлов проекта.'
-for command in docker openssl tar; do command -v "$command" >/dev/null || fail "Не найдена команда $command"; done
-docker compose version >/dev/null || fail 'Не установлен Docker Compose plugin.'
+command -v openssl >/dev/null || fail 'Не найдена команда openssl'
 [[ "$install_dir" = /* && "$keys_file" = /* ]] || fail 'Пути установки должны быть абсолютными.'
 [[ "$install_dir" != / && "$keys_file" != / ]] || fail 'Корневой каталог нельзя использовать для установки.'
-
-# A second public proxy on the same machine cannot bind these ports. Existing
-# deployments of this project are exempt because their own Caddy owns them.
-if [[ ! -d "$install_dir" ]] && command -v ss >/dev/null; then
- if ss -H -lnt 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)(80|443)$'; then
-  fail 'Порты 80/443 уже заняты. Подключите радар к существующему прокси; второй Caddy запускать нельзя.'
- fi
-fi
-
 
 ask_username() {
  local answer
@@ -92,13 +82,6 @@ if [[ -d "$install_dir" ]]; then
 fi
 mv -- "$stage" "$install_dir"
 stage=''
-cd -- "$install_dir"
-docker compose config --quiet
-docker compose up -d --build --wait --wait-timeout 180
-if ! docker compose exec -T web node scripts/setup-bot.mjs; then
- printf 'Бот не подключился автоматически. После настройки домена в BotFather повторите подключение в редакторе.\n' >&2
-fi
-printf '\nГотово: %s\n' "$(grep '^SITE_ORIGIN=' "$keys_file" | cut -d= -f2-)"
+printf '\nПроект установлен в %s. Контейнеры не запущены.\n' "$install_dir"
 printf 'Конфигурация: %s (права 0600, вне проекта)\n' "$keys_file"
-printf 'Чтобы проверить состояние: cd %s && sudo docker compose ps\n' "$install_dir"
-printf 'Проверьте, что этот домен указан для Telegram Login в BotFather.\n'
+printf 'Настройте порт и обратный прокси на сервере перед ручным запуском. Инструкции: %s/README.md\n' "$install_dir"

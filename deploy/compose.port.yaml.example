@@ -1,0 +1,6 @@
+# Use only when you choose a port on the server.
+# Set RADAR_PORT in the command environment before running docker compose.
+services:
+  web:
+    ports:
+      - "127.0.0.1:${RADAR_PORT:?Set RADAR_PORT on the server}:3000"
