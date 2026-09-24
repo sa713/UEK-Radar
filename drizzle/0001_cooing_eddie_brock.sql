@@ -1,0 +1,1 @@
+ALTER TABLE `feedback` ADD `viewed_at` integer;

@@ -1,0 +1,12 @@
+.git
+.next
+node_modules
+data
+backups
+.env*
+*keys.env
+*.key
+*.pem
+*.sqlite*
+.sites-runtime
+uek-radar-installer.run
