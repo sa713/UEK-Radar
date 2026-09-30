@@ -1,11 +1,13 @@
 import { env } from "@/lib/env";
-import { collect } from "@/lib/sources";
+import { collect,processQueue,pendingDiscovery } from "@/lib/sources";
 import { prepareWeekly,sendDigest } from "@/lib/weekly";
 import { getDb } from "@/db";
 import { scheduledCollectionStep,mondayCollectionPending } from "@/lib/schedule";
 export async function POST(request:Request){
  if(!env.CRON_SECRET||request.headers.get("Authorization")!==`Bearer ${env.CRON_SECRET}`)return new Response("Forbidden",{status:403});
  try{const url=new URL(request.url),mode=url.searchParams.get("mode");if(mode==="collect")return Response.json({outcomes:await collect(1,url.searchParams.get("source")||undefined)});
+  if(mode==="queue")return Response.json(await processQueue());
+  if(mode==="pending-discovery")return Response.json({outcomes:await pendingDiscovery()});
   if(mode==="scheduled-collect")return Response.json(await scheduledCollectionStep());
   if(mode==="collect-all")return Response.json({outcomes:await collect(100)});
   if(mode==="bot"){

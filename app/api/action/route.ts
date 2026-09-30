@@ -1,6 +1,6 @@
 import { env } from "@/lib/env";
 import { requireIdentity,ensureUser } from "@/lib/auth";
-import { ensureSources,collect } from "@/lib/sources";
+import { ensureSources,collect,retryFailedQueue } from "@/lib/sources";
 import { prepareWeekly,sendDigest } from "@/lib/weekly";
 import { getDb } from "@/db";
 import { saveCollectionSchedule } from "@/lib/schedule";
@@ -80,7 +80,11 @@ export async function POST(request:Request){
   const id=str(data.id,80),original=await db.prepare("SELECT url,kind FROM sources WHERE id=? AND status!='removed'").bind(id).first<{url:string;kind:string}>();
   if(!original)return json({error:"Источник не найден"},404);
   if(original.url!==url&&await db.prepare("SELECT id FROM sources WHERE url=?").bind(url).first())return json({error:"Этот адрес уже занят другим источником"},409);
-  if(original.url!==url||original.kind!==kind)await db.prepare("UPDATE sources SET name=?,url=?,kind=?,group_name=?,status='pending',error=NULL,last_checked=NULL WHERE id=?").bind(name,url,kind,group,id).run();
+  if(original.url!==url||original.kind!==kind){
+   await db.prepare("UPDATE source_scans SET active=0,before_id=NULL WHERE source_id=?").bind(id).run();
+   await db.prepare("UPDATE source_queue SET status='rejected',error='Source changed',updated_at=? WHERE source_id=? AND status IN ('pending','retry','failed')").bind(Date.now(),id).run();
+   await db.prepare("UPDATE sources SET name=?,url=?,kind=?,group_name=?,status='pending',error=NULL,last_checked=NULL WHERE id=?").bind(name,url,kind,group,id).run();
+  }
   else await db.prepare("UPDATE sources SET name=?,group_name=? WHERE id=?").bind(name,group,id).run();
   return json({ok:true});
  }
@@ -89,6 +93,8 @@ export async function POST(request:Request){
   const source=await db.prepare("SELECT id FROM sources WHERE id=? AND status!='removed'").bind(id).first();
   if(!source)return json({error:"Источник не найден"},404);
   await db.prepare("UPDATE sources SET enabled=0,status='removed',error=NULL WHERE id=?").bind(id).run();
+  await db.prepare("UPDATE source_scans SET active=0 WHERE source_id=?").bind(id).run();
+  await db.prepare("UPDATE source_queue SET status='rejected',error='Source removed',updated_at=? WHERE source_id=? AND status IN ('pending','retry','failed')").bind(Date.now(),id).run();
   const users=await db.prepare("SELECT id,sources FROM users").all<{id:string;sources:string}>();
   for(const user of users.results){try{const preferred=JSON.parse(user.sources) as string[];if(Array.isArray(preferred)&&preferred.includes(id))await db.prepare("UPDATE users SET sources=? WHERE id=?").bind(JSON.stringify(preferred.filter(x=>x!==id)),user.id).run()}catch{/* Keep unrelated preferences untouched. */}}
   return json({ok:true});
@@ -103,6 +109,7 @@ export async function POST(request:Request){
   await db.prepare("UPDATE stories SET title_ru=?,title_en=?,fact_ru=?,fact_en=?,why_ru=?,why_en=?,action_ru=?,action_en=?,topics=?,status_label=?,important=?,state=? WHERE id=?")
    .bind(str(data.titleRu,300),str(data.titleEn,300),str(data.factRu,2400),str(data.factEn,2400),str(data.whyRu,2400),str(data.whyEn,2400),str(data.actionRu,2400),str(data.actionEn,2400),JSON.stringify(list(data.topics)),str(data.statusLabel,60),data.important===true?1:0,state,id).run();return json({ok:true});
  }
+ if(action==="retryQueue"){const result=await retryFailedQueue();return json({ok:true,reset:result.meta.changes})}
  if(action==="collect")return json({outcomes:await collect(1)});
  if(action==="collectSource"){
   const id=str(data.id,80);

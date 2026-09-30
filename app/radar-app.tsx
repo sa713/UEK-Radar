@@ -17,7 +17,7 @@ type Week={id:string;title_ru:string;title_en:string;body_ru:string;body_en:stri
 type User={id:string;name:string;role:string;language:string;topics:string;sources:string;digest:number;bot_started:number};
 type CollectionSchedule={mode:"daily"|"selected";days:number[];time_msk:string;updated_at:number};
 type CollectionRun={slot:string;status:string;total:number;checked:number;added:number;errors:number;started_at:number;finished_at:number|null};
-type State={authenticated:boolean;loginReady?:boolean;user?:User;stories?:Story[];interestProfile?:InterestProfile;sources?:Source[];collectionSchedule?:CollectionSchedule;collectionRun?:CollectionRun|null;suggestions?:Array<{id:string;url:string;status:string;reason:string|null;proposer?:string}>;weeks?:Week[];uploads?:Array<{id:string;filename:string;status:string;error:string|null}>;jobs?:Array<{id:string;type:string;status:string;detail:string;created_at:number}>;setup?:{openai:boolean;telegram:boolean;bot:boolean};botUsername?:string|null;error?:string};
+type State={authenticated:boolean;loginReady?:boolean;user?:User;stories?:Story[];interestProfile?:InterestProfile;sources?:Source[];collectionSchedule?:CollectionSchedule;collectionRun?:CollectionRun|null;queueRows?:Array<{source_id:string;status:string;count:number}>;queueSummary?:Array<{status:string;count:number}>;scanning?:string[];suggestions?:Array<{id:string;url:string;status:string;reason:string|null;proposer?:string}>;weeks?:Week[];uploads?:Array<{id:string;filename:string;status:string;error:string|null}>;jobs?:Array<{id:string;type:string;status:string;detail:string;created_at:number}>;setup?:{openai:boolean;telegram:boolean;bot:boolean};botUsername?:string|null;error?:string};
 const topics=["ИИ","Безопасность ИИ","Уязвимости","Архитектура","Разработка","Угрозы","Данные","Банковские технологии"];
 const groups=["Безопасность ИИ","Реальные угрозы","Прикладная безопасность","Развитие ИИ","Независимый взгляд","Российский контекст ИБ","Предложенные"];
 const ru={feed:"Лента",week:"Картина недели",saved:"Сохранённое",sources:"Источники",settings:"Настройки",admin:"Редактор",mine:"Для меня",all:"Всё",bank:"В банке",world:"В мире",both:"Оба направления",suggest:"Предложить источник",search:"Поиск по материалам",useful:"Интересно",uninteresting:"Неинтересно",save:"Сохранить",what:"Что произошло",why:"Почему это важно для УЭК",action:"На что обратить внимание",open:"Открыть первоисточник",empty:"Пока нет опубликованных материалов",emptyHint:"Материалы появятся после подключения источников и первой обработки.",demonstration:"Демонстрационный материал",important:"Важное для всех"};
@@ -34,6 +34,7 @@ function sourceHealth(s:Source,lang:string){
  if(!s.enabled)return {label:en?"Paused":"Отключён",tone:"text-[#90a2ad]"};
  if(s.status==="error")return {label:en?"Check failed":"Ошибка проверки",tone:"text-[#ffaaa0]"};
  if(s.error)return {label:en?"Cannot read stories":"Не удалось прочитать",tone:"text-[#c5bfa1]"};
+ if(s.status==="checking")return {label:en?"Scanning history":"Просматривает историю",tone:"text-[#e4c995]"};
  if(s.status==="working")return {label:en?"Checked":"Проверен",tone:"text-[#b9f1d4]"};
  return {label:en?"Not checked yet":"Ещё не проверен",tone:"text-[#90a2ad]"};
 }
@@ -68,6 +69,11 @@ export function RadarApp(){
   finally{setPendingFeedback(prev=>{const next={...prev};delete next[s.id];return next})}
  };
  useEffect(()=>{let active=true;void fetch("/api/state",{cache:"no-store"}).then(r=>r.json()).then(v=>{if(!active)return;const state=v as State;setData(state);const target=new URLSearchParams(window.location.search).get("story");const matched=state.stories?.find(s=>s.id===target);if(matched){setSelected(matched);setDraft(matched)}}).catch(()=>{if(active)setError("Нет соединения с сайтом")});return()=>{active=false}},[]);
+ useEffect(()=>{
+  if(screen!=="admin"||user?.role!=="admin")return;
+  const timer=setInterval(()=>{void fetch("/api/state",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(state=>{if(state)setData(state as State)}).catch(()=>{})},10000);
+  return()=>clearInterval(timer);
+ },[screen,user?.role]);
  const act=async(action:string,payload:Record<string,unknown>={})=>{setBusy(action);setError("");setNotice("");try{const r=await fetch("/api/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...payload})});const result=await r.json() as {error?:string;outcomes?:Array<{source:string}>};if(!r.ok)throw new Error(result.error||"Ошибка");await reload();setNotice(action.startsWith("collect")?"Проверен источник: "+(result.outcomes||[]).map((x:{source:string})=>x.source).join(", "):"Сохранено");return result}catch(e){setError(e instanceof Error?e.message:"Ошибка запроса");return null}finally{setBusy("")}};
  useEffect(()=>{
   if(!data?.authenticated)return;
@@ -190,12 +196,12 @@ function Settings({user,sources,lang,busy,onSave,botUsername}:{user:User;sources
 }
 type SourceDraft={id:string;name:string;url:string;kind:string;group:string};
 const emptySource:SourceDraft={id:"",name:"",url:"",kind:"web",group:"Развитие ИИ"};
-function SourceManager({sources,busy,act,reload}:{sources:Source[];busy:string;act:(name:string,payload?:Record<string,unknown>)=>Promise<unknown>;reload:()=>Promise<void>}){
+function SourceManager({sources,busy,act,reload,queueRows,queueSummary,scanning}:{sources:Source[];busy:string;queueRows?:State["queueRows"];queueSummary?:State["queueSummary"];scanning?:string[];act:(name:string,payload?:Record<string,unknown>)=>Promise<unknown>;reload:()=>Promise<void>}){
  const [draft,setDraft]=useState<SourceDraft>(emptySource),[open,setOpen]=useState(false),[removing,setRemoving]=useState<Source|null>(null),[saving,setSaving]=useState(false),[error,setError]=useState("");
  const [checking,setChecking]=useState<string|null>(null),[elapsed,setElapsed]=useState(0),[checkResult,setCheckResult]=useState("");
  useEffect(()=>{
   if(!checking)return;
-  const started=Date.now();setElapsed(0);
+  const started=Date.now();
   const timer=setInterval(()=>setElapsed(Math.floor((Date.now()-started)/1000)),1000);
   return()=>clearInterval(timer);
  },[checking]);
@@ -203,12 +209,12 @@ function SourceManager({sources,busy,act,reload}:{sources:Source[];busy:string;a
   if(checking||busy||saving)return;
   setChecking(id||"__next");setElapsed(0);setCheckResult("");setError("");
   try{
-   const result=await act(id?"collectSource":"collect",id?{id}:{}) as {outcomes?:Array<{source:string;found?:number;added?:number;error?:string;warning?:string}>}|null;
+   const result=await act(id?"collectSource":"collect",id?{id}:{}) as {outcomes?:Array<{source:string;found?:number;added?:number;error?:string;warning?:string;continuation?:boolean}>}|null;
    if(!result){setError("Не удалось завершить проверку. Обновите страницу и проверьте статус источника перед повторным запуском.");return;}
    const outcomes=result.outcomes||[];
    const failures=outcomes.filter(item=>item.error);
    if(failures.length)setError(failures.map(item=>item.source+": "+item.error).join(" · "));
-   else setCheckResult(outcomes.map(item=>item.source+": найдено материалов — "+(item.found||0)+", новых карточек — "+(item.added||0)+(item.warning?". "+item.warning:"")).join(" · ")||"Проверка завершена.");
+   else setCheckResult(outcomes.map(item=>item.source+": найдено материалов — "+(item.found||0)+", поставлено в очередь — "+(item.added||0)+(item.continuation?"; история ещё просматривается":"")+(item.warning?". "+item.warning:"")).join(" · ")||"Проверка завершена.");
   }catch{setError("Соединение прервалось. Проверка на сервере могла продолжиться; обновите страницу и проверьте статус источника.");}
   finally{setChecking(null);}
  };
@@ -228,11 +234,13 @@ function SourceManager({sources,busy,act,reload}:{sources:Source[];busy:string;a
  const save=async()=>{if(await manage(draft.id?"sourceUpdate":"sourceCreate",draft)){setOpen(false);setDraft(emptySource)}};
  return <div className="panel min-w-0">
   <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Внешние источники</h2><p className="hint">Добавляйте площадки, меняйте настройки и проверяйте сбор.</p></div><Button onClick={startCreate} disabled={saving||Boolean(busy)}><Plus size={16}/>Добавить источник</Button></div>
+  <p className="mt-3 text-sm text-[#a9b9c0]">Очередь: {queueSummary?.filter(x=>["pending","retry","processing"].includes(x.status)).reduce((n,x)=>n+x.count,0)||0} ждут обработки · {queueSummary?.find(x=>x.status==="published")?.count||0} опубликовано · {queueSummary?.find(x=>x.status==="rejected")?.count||0} отклонено · {queueSummary?.find(x=>x.status==="duplicate")?.count||0} дубликатов · {queueSummary?.find(x=>x.status==="failed")?.count||0} ошибок</p>
+  {(queueSummary?.find(x=>x.status==="failed")?.count||0)>0&&<Button className="mt-3" variant="secondary" disabled={saving||Boolean(busy)} onClick={()=>{void act("retryQueue")}}>Повторить ошибки</Button>}
   <Button className="mt-5" variant="secondary" disabled={saving||Boolean(busy)} onClick={()=>{void checkSource()}}><RefreshCw size={16} className={checking==="__next"?"animate-spin":""}/>{checking==="__next"?"Проверяем…":"Проверить следующий"}</Button>
-  {checking&&<div role="status" aria-live="polite" className="mt-4 rounded-xl border border-[#45606b] bg-[#223443] p-4"><p className="flex items-center gap-2 text-[#b9f1d4]"><RefreshCw size={16} className="animate-spin"/><span>Проверяем источник{checking!=="__next"?" «"+(sources.find(source=>source.id===checking)?.name||"")+"»":""}… · {elapsed} с</span></p><p className="mt-2 text-sm text-[#a9b9c0]">Проверка включает загрузку материалов и разбор новых публикаций с помощью ИИ. Это может занять несколько минут.</p>{elapsed>=60&&<p className="mt-2 text-sm text-[#e4c995]">Проверка ещё выполняется. Дождитесь результата, повторно нажимать кнопку не нужно.</p>}</div>}
+  {checking&&<div role="status" aria-live="polite" className="mt-4 rounded-xl border border-[#45606b] bg-[#223443] p-4"><p className="flex items-center gap-2 text-[#b9f1d4]"><RefreshCw size={16} className="animate-spin"/><span>Проверяем источник{checking!=="__next"?" «"+(sources.find(source=>source.id===checking)?.name||"")+"»":""}… · {elapsed} с</span></p><p className="mt-2 text-sm text-[#a9b9c0]">Проверка сохраняет найденные публикации в очередь. Фоновая обработка продолжится после ответа.</p>{elapsed>=60&&<p className="mt-2 text-sm text-[#e4c995]">Проверка ещё выполняется. Дождитесь результата, повторно нажимать кнопку не нужно.</p>}</div>}
   {checkResult&&<p role="status" aria-live="polite" className="mt-4 rounded-xl border border-[#456956] p-3 text-sm text-[#b9f1d4]">{checkResult}</p>}
   {error&&<p className="mt-4 text-sm text-[#ffaaa0]" role="alert">{error}</p>}
-  <div className="mt-5 max-h-[32rem] overflow-y-auto space-y-0.5">{sources.map(source=><div key={source.id} className="border-t border-[#344655] py-3 min-w-0"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><a href={source.url} target="_blank" rel="noopener noreferrer" className="font-medium text-[#eaf4f2] hover:text-[#b9f1d4]">{source.name} ↗</a><p className="mt-1 text-xs text-[#a9b9c0] break-all">{source.url}</p><p className="mt-1 text-xs text-[#90a2ad]">{source.group_name} · {source.kind} · {sourceHealth(source,"ru").label}{source.error?` · ${source.error}`:""}</p></div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm"><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)||!source.enabled} onClick={()=>{void checkSource(source.id)}}>{checking===source.id?<span className="inline-flex items-center gap-2"><RefreshCw size={14} className="animate-spin"/>Проверяем…</span>:"Проверить"}</button><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>startEdit(source)}>Изменить</button><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>{void manage("sourceToggle",{id:source.id,enabled:!source.enabled})}}>{source.enabled?"Приостановить":"Возобновить"}</button><button className="text-[#ffaaa0] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>{setError("");setRemoving(source)}}>Удалить</button></div></div>)}</div>
+  <div className="mt-5 max-h-[32rem] overflow-y-auto space-y-0.5">{sources.map(source=><div key={source.id} className="border-t border-[#344655] py-3 min-w-0"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><a href={source.url} target="_blank" rel="noopener noreferrer" className="font-medium text-[#eaf4f2] hover:text-[#b9f1d4]">{source.name} ↗</a><p className="mt-1 text-xs text-[#a9b9c0] break-all">{source.url}</p><p className="mt-1 text-xs text-[#90a2ad]">{source.group_name} · {source.kind} · {sourceHealth(source,"ru").label}{source.error?` · ${source.error}`:""}{scanning?.includes(source.id)?" · история просматривается":""}{queueRows?.some(row=>row.source_id===source.id)?` · очередь ${queueRows.filter(row=>row.source_id===source.id&&["pending","retry","processing"].includes(row.status)).reduce((n,row)=>n+row.count,0)}`:""}</p></div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm"><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)||!source.enabled} onClick={()=>{void checkSource(source.id)}}>{checking===source.id?<span className="inline-flex items-center gap-2"><RefreshCw size={14} className="animate-spin"/>Проверяем…</span>:"Проверить"}</button><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>startEdit(source)}>Изменить</button><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>{void manage("sourceToggle",{id:source.id,enabled:!source.enabled})}}>{source.enabled?"Приостановить":"Возобновить"}</button><button className="text-[#ffaaa0] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>{setError("");setRemoving(source)}}>Удалить</button></div></div>)}</div>
   <Dialog open={open} onOpenChange={setOpen}>
    <DialogContent className="max-h-[90vh] overflow-y-auto bg-[#14202d] border-[#45606b]">
     <DialogHeader><DialogTitle>{draft.id?"Изменить источник":"Добавить источник"}</DialogTitle></DialogHeader>
@@ -255,7 +263,6 @@ function CollectionSchedulePanel({schedule,run,busy,act}:{schedule?:CollectionSc
  const [mode,setMode]=useState<"daily"|"selected">(schedule?.mode||"daily");
  const [days,setDays]=useState<number[]>(schedule?.days||[1,2,3,4,5,6,7]);
  const [time,setTime]=useState(schedule?.time_msk||"05:00");
- useEffect(()=>{if(schedule){setMode(schedule.mode);setDays(schedule.days);setTime(schedule.time_msk)}},[schedule?.updated_at]);
  const toggle=(day:number)=>setDays(current=>current.includes(day)?current.filter(d=>d!==day):[...current,day].sort());
  return <div className="panel mt-5"><h2 className="text-xl font-semibold">Автоматический сбор новостей</h2><p className="hint">Сервер проверяет включённые источники и публикует новые карточки без участия читателей. Время указано по Москве.</p>
   <div className="mt-5 flex flex-wrap gap-2"><Button variant={mode==="daily"?"default":"secondary"} aria-pressed={mode==="daily"} onClick={()=>setMode("daily")}>Ежедневно</Button><Button variant={mode==="selected"?"default":"secondary"} aria-pressed={mode==="selected"} onClick={()=>setMode("selected")}>По дням недели</Button></div>
@@ -263,7 +270,7 @@ function CollectionSchedulePanel({schedule,run,busy,act}:{schedule?:CollectionSc
   <label className="mt-5 block max-w-48 text-sm">Время (МСК)<Input className="mt-2" type="time" value={time} onChange={e=>setTime(e.target.value)}/></label>
   <Button className="mt-5" disabled={Boolean(busy)||mode==="selected"&&!days.length||!time} onClick={()=>{void act("collectionSchedule",{mode,days,time})}}>{busy==="collectionSchedule"?"Сохраняем…":"Сохранить расписание"}</Button>
   <p className="mt-3 text-xs text-[#90a2ad]">Если сервер пропустит время запуска, он выполнит сбор после восстановления в тот же день. Повторного сбора за уже обработанный день не будет.</p>
-  {run&&<div className="mt-5 border-t border-[#344655] pt-4 text-sm"><span className="text-[#b9f1d4]">Последний запуск · {run.slot}</span><p className="mt-1 text-[#a9b9c0]">{run.status==="running"?"Выполняется":run.status==="partial"?"Завершён с ошибками":"Завершён"} · проверено {run.checked} из {run.total} · новых карточек {run.added}{run.errors?` · ошибок ${run.errors}`:""}</p></div>}
+  {run&&<div className="mt-5 border-t border-[#344655] pt-4 text-sm"><span className="text-[#b9f1d4]">Последний запуск · {run.slot}</span><p className="mt-1 text-[#a9b9c0]">{run.status==="running"?"Выполняется":run.status==="partial"?"Завершён с ошибками":"Завершён"} · проверено {run.checked} из {run.total} · найдено новых публикаций {run.added}{run.errors?` · ошибок ${run.errors}`:""}</p></div>}
  </div>;
 }
 function AdminPanel({data,busy,act,reload,onEdit}:{data:State;busy:string;act:(name:string,payload?:Record<string,unknown>)=>Promise<unknown>;reload:()=>Promise<void>;onEdit:(s:Story)=>void}){
@@ -275,8 +282,8 @@ function AdminPanel({data,busy,act,reload,onEdit}:{data:State;busy:string;act:(n
  const upload=async()=>{if(!file)return;setUploading(true);setError("");try{const form=new FormData();form.append("file",file);const r=await fetch("/api/upload",{method:"POST",body:form});const result=await r.json() as {error?:string;outcomes?:Array<{source:string}>};if(!r.ok)throw new Error(result.error);setFile(null);await reload()}catch(e){setError(e instanceof Error?e.message:"Ошибка загрузки")}finally{setUploading(false)}};
  return <section><Eyebrow>Управление</Eyebrow><h1 className="page-title">Редактор</h1><p className="mt-3 text-[#a9b9c0]">Контроль источников, демонстрационных файлов и обзора недели.</p>
   <div className="mt-8 grid md:grid-cols-3 gap-3">{([ ["OpenAI API",data.setup?.openai],["Telegram Login",data.setup?.telegram],["Бот",data.setup?.bot] ] as const).map(([name,ready])=><div key={name} className="panel !p-4"><span className="text-sm text-[#9bacb5]">{name}</span><div className={`mt-2 font-semibold ${ready?"text-[#b9f1d4]":"text-[#e0c095]"}`}>{ready?"Готов":"Не подключён"}</div></div>)}</div>
-  <CollectionSchedulePanel schedule={data.collectionSchedule} run={data.collectionRun} busy={busy} act={act}/>
-  <div className="grid lg:grid-cols-2 gap-5 mt-8"><SourceManager sources={data.sources||[]} busy={busy} act={act} reload={reload}/>
+  <CollectionSchedulePanel key={data.collectionSchedule?.updated_at} schedule={data.collectionSchedule} run={data.collectionRun} busy={busy} act={act}/>
+  <div className="grid lg:grid-cols-2 gap-5 mt-8"><SourceManager sources={data.sources||[]} busy={busy} act={act} reload={reload} queueRows={data.queueRows} queueSummary={data.queueSummary} scanning={data.scanning}/>
    <div className="panel"><h2 className="text-xl font-semibold">Демонстрационный файл</h2><p className="hint">PDF, DOCX, PPTX или Markdown. Только вымышленные сведения, до 8 МБ.</p><label className="mt-5 flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-[#648077] text-sm text-[#b9f1d4] hover:bg-[#1d2e3c]"><FileUp size={21} className="mb-2"/>{file?.name||"Выбрать файл"}<input type="file" accept=".pdf,.docx,.pptx,.md,.markdown" className="sr-only" onChange={e=>setFile(e.target.files?.[0]||null)}/></label><Button disabled={!file||uploading} className="mt-4" onClick={()=>{void upload()}}>{uploading?"Обрабатываем…":"Загрузить и разобрать"}</Button>{error&&<p role="alert" className="text-[#ffaaa0] mt-3 text-sm">{error}</p>}<div className="mt-4 text-sm text-[#a9b9c0]">{(data.uploads||[]).map(f=><div key={f.id} className="mt-2">{f.filename} · {f.status}{f.error&&<span className="text-[#ffaaa0]"> · {f.error}</span>}</div>)}</div></div>
   </div>
   <div className="panel mt-5"><h2 className="text-xl font-semibold">Карточки на проверке</h2>{adminDrafts.length?adminDrafts.map(s=><div className="flex justify-between gap-3 border-t border-[#344655] py-3 mt-3" key={s.id}><span className="text-sm">{s.title_ru||s.title_original}</span><Button size="sm" variant="secondary" onClick={()=>onEdit(s)}>Открыть</Button></div>):<p className="hint">Ожидают загрузки демонстрационного файла.</p>}</div>

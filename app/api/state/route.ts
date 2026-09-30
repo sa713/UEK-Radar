@@ -23,8 +23,11 @@ export async function GET(request:Request){
   const weeks=await db.prepare("SELECT * FROM weekly WHERE status='published' OR ?='admin' ORDER BY created_at DESC LIMIT 24").bind(identity.role).all();
   const uploads=identity.role==="admin"?await db.prepare("SELECT * FROM uploads ORDER BY created_at DESC LIMIT 60").all():{results:[]};
   const jobs=identity.role==="admin"?await db.prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 30").all():{results:[]};
+  const queueRows=identity.role==="admin"?await db.prepare("SELECT source_id,status,COUNT(*) count FROM source_queue GROUP BY source_id,status").all<{source_id:string;status:string;count:number}>():{results:[]};
+  const queueSummary=identity.role==="admin"?await db.prepare("SELECT status,COUNT(*) count FROM source_queue GROUP BY status").all<{status:string;count:number}>():{results:[]};
+  const scanning=identity.role==="admin"?await db.prepare("SELECT source_id FROM source_scans WHERE active=1").all<{source_id:string}>():{results:[]};
   const collectionSchedule=identity.role==="admin"?await getCollectionSchedule():undefined;
   const collectionRun=identity.role==="admin"?await db.prepare("SELECT * FROM collection_runs ORDER BY slot DESC LIMIT 1").first():undefined;
-  return Response.json({authenticated:true,user:{...user,role:identity.role},interestProfile,stories:stories.results,sources:sourceRows.results,suggestions:suggestions.results,weeks:weeks.results,uploads:uploads.results,jobs:jobs.results,collectionSchedule,collectionRun,botUsername:env.TELEGRAM_BOT_USERNAME||null,setup:identity.role==="admin"?{openai:Boolean(env.OPENAI_API_KEY),telegram:authConfigured(),bot:Boolean(env.TELEGRAM_BOT_TOKEN)}:undefined});
+  return Response.json({authenticated:true,user:{...user,role:identity.role},interestProfile,stories:stories.results,sources:sourceRows.results,suggestions:suggestions.results,weeks:weeks.results,uploads:uploads.results,jobs:jobs.results,collectionSchedule,collectionRun,queueRows:queueRows.results,queueSummary:queueSummary.results,scanning:scanning.results.map(row=>row.source_id),botUsername:env.TELEGRAM_BOT_USERNAME||null,setup:identity.role==="admin"?{openai:Boolean(env.OPENAI_API_KEY),telegram:authConfigured(),bot:Boolean(env.TELEGRAM_BOT_TOKEN)}:undefined});
  }catch(e){console.error("state load failed",e);return Response.json({error:"Не удалось загрузить данные. Повторите попытку."},{status:503})}
 }

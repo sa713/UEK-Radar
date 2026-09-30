@@ -27,7 +27,7 @@ async function tick() {
  try {
   // Each request processes at most one source. The database records which
   // sources are done, so a restart resumes an unfinished collection.
-  for (let i=0; i<1000; i++) {
+  for (let i=0; i<30; i++) {
    const result = await job('scheduled-collect');
    if (!result.active || !result.processed) {
     if(result.active) return;
@@ -37,6 +37,16 @@ async function tick() {
     }
     break;
    }
+  }
+  // Finish manual Telegram history scans and process the durable queue in
+  // small requests. A delayed retry is picked up by a later tick.
+  for(let i=0;i<2;i++){
+   const scan=await job('pending-discovery');
+   if(!scan.outcomes?.length||!scan.outcomes[0]?.continuation)break;
+  }
+  for(let i=0;i<20;i++){
+   const result=await job('queue');
+   if(!result.processed)break;
   }
   const { date, weekday, hour } = moscowClock();
   if(weekday==='Mon' && hour>=8 && attemptedWeek!==date) {

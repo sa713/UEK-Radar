@@ -25,7 +25,9 @@ export async function mondayCollectionPending() {
  const schedule=await getCollectionSchedule();
  if(schedule.mode==="selected"&&!schedule.days.includes(1))return false;
  const run=await getDb().prepare("SELECT status FROM collection_runs WHERE slot=?").bind(clock.date).first<{status:string}>();
- return !run||run.status==="running";
+ if(!run||run.status==="running")return true;
+ const pending=await getDb().prepare("SELECT 1 FROM source_queue WHERE status IN ('pending','retry','processing') LIMIT 1").first();
+ return Boolean(pending);
 }
 
 export async function scheduledCollectionStep() {
@@ -44,14 +46,14 @@ export async function scheduledCollectionStep() {
  await db.prepare("UPDATE collection_run_sources SET status='pending' WHERE slot=? AND status='running' AND claimed_at<?").bind(slot,now-10*60_000).run();
  const claimed=await db.prepare("UPDATE collection_run_sources SET status='running',claimed_at=?,attempts=attempts+1 WHERE slot=? AND source_id=(SELECT source_id FROM collection_run_sources WHERE slot=? AND status='pending' ORDER BY source_id LIMIT 1) RETURNING source_id,attempts").bind(now,slot,slot).first<{source_id:string;attempts:number}>();
  if(claimed){
-  let added=0,error:string|null=null;
+  let added=0,continuation=false,error:string|null=null;
   try{
    const outcome=(await collect(1,claimed.source_id))[0];
    if(!outcome)error="Источник выключен или удалён после начала сбора";
    else if("error" in outcome)error=String(outcome.error).slice(0,250);
-   else added=outcome.added||0;
+   else {added=outcome.added||0;continuation=outcome.continuation||false;}
   }catch(e){error=(e instanceof Error?e.message:String(e)).slice(0,250)}
-  await db.prepare("UPDATE collection_run_sources SET status=?,added=?,error=? WHERE slot=? AND source_id=?").bind(error?(claimed.attempts<2?"pending":"error"):"done",added,error,slot,claimed.source_id).run();
+  await db.prepare("UPDATE collection_run_sources SET status=?,added=added+?,error=?,attempts=? WHERE slot=? AND source_id=?").bind(error?(claimed.attempts<2?"pending":"error"):continuation?"pending":"done",added,error,continuation?0:claimed.attempts,slot,claimed.source_id).run();
  }
  const tally=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) checked,SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) errors,SUM(added) added,SUM(CASE WHEN status IN ('pending','running') THEN 1 ELSE 0 END) remaining FROM collection_run_sources WHERE slot=?").bind(slot).first<{total:number;checked:number;errors:number;added:number;remaining:number}>();
  const total=tally?.total||0,checked=tally?.checked||0,errors=tally?.errors||0,added=tally?.added||0,remaining=tally?.remaining||0;
@@ -59,7 +61,7 @@ export async function scheduledCollectionStep() {
  if(remaining===0){
   const status=errors?"partial":"done";
   const finished=await db.prepare("UPDATE collection_runs SET status=?,finished_at=? WHERE slot=? AND status='running'").bind(status,Date.now(),slot).run();
-  if(finished.meta.changes)await db.prepare("INSERT INTO jobs(id,type,status,detail,created_at) VALUES(?,?,?,?,?)").bind(crypto.randomUUID(),"scheduled-collect",status,JSON.stringify({slot,total,checked,added,errors}),Date.now()).run();
+  if(finished.meta.changes)await db.prepare("INSERT INTO jobs(id,type,status,detail,created_at) VALUES(?,?,?,?,?)").bind(crypto.randomUUID(),"scheduled-collect",status,JSON.stringify({slot,total,checked,queued:added,errors}),Date.now()).run();
  }
  return {due:true,active:remaining>0,processed:Boolean(claimed),slot,total,checked,added,errors,remaining};
 }
