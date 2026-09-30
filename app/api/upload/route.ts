@@ -1,4 +1,5 @@
 import { env } from "@/lib/env";
+import { isSameOrigin } from "@/lib/request-origin";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import JSZip from "jszip";
@@ -25,7 +26,7 @@ async function extract(bytes:Uint8Array,ext:string){
 export async function POST(request:Request){
  try{
   await requireIdentity(true);
-  if(request.headers.get("origin")&&request.headers.get("origin")!==new URL(request.url).origin)return Response.json({error:"Недопустимый источник запроса"},{status:403});
+  if(!isSameOrigin(request))return Response.json({error:"Недопустимый источник запроса"},{status:403});
   if(!env.OPENAI_API_KEY)return Response.json({error:"Для разбора файла нужен ключ OpenAI API"},{status:503});
   const file=(await request.formData()).get("file");if(!(file instanceof File))return Response.json({error:"Выберите файл"},{status:400});
   const filename=file.name.replace(/[\\/\x00-\x1f]/g,"_").slice(0,180),ext=filename.split(".").pop()?.toLowerCase()||"";

@@ -4,6 +4,8 @@ import { ensureSources,collect } from "@/lib/sources";
 import { prepareWeekly,sendDigest } from "@/lib/weekly";
 import { getDb } from "@/db";
 import { saveCollectionSchedule } from "@/lib/schedule";
+import { configureTelegramBot } from "@/lib/telegram";
+import { isSameOrigin } from "@/lib/request-origin";
 
 const json=(v:unknown,status=200)=>Response.json(v,{status});
 const str=(v:unknown,max=500)=>String(v??"").trim().slice(0,max);
@@ -23,7 +25,7 @@ function monitoredUrl(value:string,kind:string){
  return `https://t.me/s/${match[1]}`;
 }
 export async function POST(request:Request){
- if(request.headers.get("origin")&&request.headers.get("origin")!==new URL(request.url).origin)return json({error:"Недопустимый источник запроса"},403);
+ if(!isSameOrigin(request))return json({error:"Недопустимый источник запроса"},403);
  let data:Record<string,unknown>;try{data=await request.json()}catch{return json({error:"Неверные данные"},400)}
  try{
  const identity=await requireIdentity();await ensureUser(identity);await ensureSources();const db=getDb();const action=str(data.action,60);
@@ -117,8 +119,7 @@ export async function POST(request:Request){
  if(action==="sendWeek")return json({results:await sendDigest(str(data.id,30))});
  if(action==="setupBot"){
   if(!env.TELEGRAM_BOT_TOKEN||!env.CRON_SECRET||!env.SITE_ORIGIN)return json({error:"Нужны токен бота, адрес сайта и секрет заданий"},503);
-  const reply=await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:`${env.SITE_ORIGIN}/api/bot`,secret_token:env.CRON_SECRET,allowed_updates:["message"]})});
-  return json({ok:reply.ok,detail:reply.ok?"Бот подключён":(await reply.text()).slice(0,200)},reply.ok?200:502);
+  return json({ok:true,detail:await configureTelegramBot()});
  }
  return json({error:"Неизвестное действие"},400);
  }catch(e){if(e instanceof Response)return e;console.error("Action failed",e);return json({error:e instanceof Error?e.message:"Не удалось выполнить действие"},500)}

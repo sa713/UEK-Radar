@@ -4,6 +4,7 @@ import { verify,sign,verifyTelegramLogin,cookieOptions,ensureUser } from "@/lib/
 import { isAdminUsername } from "@/lib/admin";
 
 export async function GET(request:Request){
+  if(env.TELEGRAM_LOGIN_MODE==="device")return new Response("Недоступно",{status:404});
   const url=new URL(request.url);
   const encoded=request.headers.get("cookie")?.split(";").map(s=>s.trim()).find(s=>s.startsWith("uek_login_state="))?.slice("uek_login_state=".length);
   const flow=await verify(encoded?decodeURIComponent(encoded):undefined);

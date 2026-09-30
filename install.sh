@@ -25,8 +25,10 @@ ask_username() {
 
 if [[ ! -e "$keys_file" ]]; then
  [[ -t 0 ]] || fail 'Для первой установки нужен интерактивный ввод настроек.'
- read -r -p 'Домен радара (например radar.example.org): ' domain
- [[ "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}$ ]] || fail 'Некорректный домен.'
+ read -r -p 'Полный HTTPS-адрес радара (например https://203.0.113.10:8443): ' origin
+ [[ "$origin" =~ ^https://([A-Za-z0-9][A-Za-z0-9.-]*)(:([0-9]{1,5}))?/?$ ]] || fail 'Укажите HTTPS-адрес без пути.'
+ domain="${BASH_REMATCH[1]}"
+ origin="${origin%/}"
  read -r -p 'Username Telegram-бота (без @): ' bot_username
  bot_username="${bot_username#@}"
  [[ "$bot_username" =~ ^[A-Za-z0-9_]{5,32}$ ]] || fail 'Некорректный username бота.'
@@ -40,7 +42,7 @@ if [[ ! -e "$keys_file" ]]; then
  temp_keys="$(mktemp "${keys_file}.XXXXXX")"
  trap '[[ -z "${temp_keys:-}" ]] || rm -f -- "$temp_keys"' EXIT
  {
-  printf 'DOMAIN=%s\nSITE_ORIGIN=https://%s\n' "$domain" "$domain"
+  printf 'DOMAIN=%s\nSITE_ORIGIN=%s\nTELEGRAM_LOGIN_MODE=device\n' "$domain" "$origin"
   printf 'TELEGRAM_BOT_USERNAME=%s\nTELEGRAM_BOT_TOKEN=%s\n' "$bot_username" "$bot_token"
   printf 'ADMIN_TELEGRAM_USERNAME=%s\n' "$admin_username"
   printf 'SESSION_SECRET=%s\nCRON_SECRET=%s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)"

@@ -1,5 +1,7 @@
 // The server owns the schedule and the durable progress in SQLite. This small
 // worker only calls its internal endpoint, so changing the time needs no deploy.
+import { runBotPoller } from './bot-poller.mjs';
+void runBotPoller();
 const base = process.env.WEB_INTERNAL_ORIGIN || 'http://web:3000';
 let inFlight = false, attemptedWeek = '', loggedSlot = '';
 

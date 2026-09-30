@@ -4,6 +4,7 @@ import { randomKey,sign,cookieOptions,authConfigured } from "@/lib/auth";
 
 export async function GET(request:Request){
   if(!authConfigured()) return new Response("Авторизация Telegram ещё не настроена",{status:503});
+  if(env.TELEGRAM_LOGIN_MODE==="device")return NextResponse.redirect(new URL("/auth/login",env.SITE_ORIGIN||request.url));
   const state=randomKey(),origin=env.SITE_ORIGIN||new URL(request.url).origin;
   const url=new URL("/auth/login",origin);url.searchParams.set("state",state);
   const response=NextResponse.redirect(url);

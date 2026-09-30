@@ -1,0 +1,10 @@
+# Replace 203.0.113.10 with the server IP before appending to the gallery Caddyfile.
+# The radar ip-proxy must join the gallery's Docker network.
+http://203.0.113.10 {
+	handle /.well-known/acme-challenge/* {
+		reverse_proxy uek-radar-ip-proxy:80
+	}
+	handle {
+		respond "Use the radar HTTPS address and port" 404
+	}
+}

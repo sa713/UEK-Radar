@@ -27,5 +27,6 @@ FROM node:24-bookworm-slim AS worker
 WORKDIR /app
 ENV NODE_ENV=production WEB_INTERNAL_ORIGIN=http://web:3000
 COPY --chown=node:node worker/scheduler.mjs ./scheduler.mjs
+COPY --chown=node:node worker/bot-poller.mjs ./bot-poller.mjs
 USER node
 CMD ["node", "scheduler.mjs"]

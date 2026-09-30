@@ -1,0 +1,28 @@
+services:
+  ip-proxy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    environment:
+      RADAR_IP: ${RADAR_IP:?Set RADAR_IP}
+    ports:
+      - "${RADAR_HTTPS_PORT:?Set RADAR_HTTPS_PORT}:8443"
+    volumes:
+      - ./deploy/Caddyfile.ip:/etc/caddy/Caddyfile:ro
+      - ip_caddy_data:/data
+      - ip_caddy_config:/config
+    networks:
+      default: {}
+      gallery:
+        aliases: [uek-radar-ip-proxy]
+    depends_on:
+      web:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+networks:
+  gallery:
+    external: true
+    name: ${GALLERY_NETWORK:?Set GALLERY_NETWORK}
+volumes:
+  ip_caddy_data:
+  ip_caddy_config:

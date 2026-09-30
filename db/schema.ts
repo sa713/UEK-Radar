@@ -87,3 +87,13 @@ export const collectionRunSources = sqliteTable("collection_run_sources", {
   status: text("status").notNull().default("pending"), attempts: integer("attempts").notNull().default(0),
   claimedAt: integer("claimed_at"), added: integer("added").notNull().default(0), error: text("error"),
 }, (t) => [primaryKey({columns:[t.slot,t.sourceId]})]);
+
+export const deviceLogins = sqliteTable("device_logins", {
+ id:text("id").primaryKey(),verifierHash:text("verifier_hash").notNull(),
+ displayCode:text("display_code").notNull(),requesterHash:text("requester_hash").notNull(),
+ status:text("status").notNull(),candidateJson:text("candidate_json"),
+ createdAt:integer("created_at").notNull(),expiresAt:integer("expires_at").notNull(),
+},t=>[index("device_logins_requester").on(t.requesterHash,t.createdAt)]);
+export const botPollState = sqliteTable("bot_poll_state", {
+ id:integer("id").primaryKey(),nextOffset:integer("next_offset").notNull().default(0),
+});

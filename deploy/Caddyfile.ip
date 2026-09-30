@@ -1,0 +1,10 @@
+https://{$RADAR_IP}:8443 {
+	tls {
+		issuer acme {
+			profile shortlived
+			disable_tlsalpn_challenge
+		}
+	}
+	encode zstd gzip
+	reverse_proxy web:3000
+}
