@@ -192,6 +192,27 @@ type SourceDraft={id:string;name:string;url:string;kind:string;group:string};
 const emptySource:SourceDraft={id:"",name:"",url:"",kind:"web",group:"Развитие ИИ"};
 function SourceManager({sources,busy,act,reload}:{sources:Source[];busy:string;act:(name:string,payload?:Record<string,unknown>)=>Promise<unknown>;reload:()=>Promise<void>}){
  const [draft,setDraft]=useState<SourceDraft>(emptySource),[open,setOpen]=useState(false),[removing,setRemoving]=useState<Source|null>(null),[saving,setSaving]=useState(false),[error,setError]=useState("");
+ const [checking,setChecking]=useState<string|null>(null),[elapsed,setElapsed]=useState(0),[checkResult,setCheckResult]=useState("");
+ useEffect(()=>{
+  if(!checking)return;
+  const started=Date.now();setElapsed(0);
+  const timer=setInterval(()=>setElapsed(Math.floor((Date.now()-started)/1000)),1000);
+  return()=>clearInterval(timer);
+ },[checking]);
+ const checkSource=async(id?:string)=>{
+  if(checking||busy||saving)return;
+  setChecking(id||"__next");setElapsed(0);setCheckResult("");setError("");
+  try{
+   const result=await act(id?"collectSource":"collect",id?{id}:{}) as {outcomes?:Array<{source:string;found?:number;added?:number;error?:string;warning?:string}>}|null;
+   if(!result){setError("Не удалось завершить проверку. Обновите страницу и проверьте статус источника перед повторным запуском.");return;}
+   const outcomes=result.outcomes||[];
+   const failures=outcomes.filter(item=>item.error);
+   if(failures.length)setError(failures.map(item=>item.source+": "+item.error).join(" · "));
+   else setCheckResult(outcomes.map(item=>item.source+": найдено материалов — "+(item.found||0)+", новых карточек — "+(item.added||0)+(item.warning?". "+item.warning:"")).join(" · ")||"Проверка завершена.");
+  }catch{setError("Соединение прервалось. Проверка на сервере могла продолжиться; обновите страницу и проверьте статус источника.");}
+  finally{setChecking(null);}
+ };
+
  const manage=async(action:string,payload:Record<string,unknown>)=>{
   setSaving(true);setError("");
   try{
@@ -207,9 +228,11 @@ function SourceManager({sources,busy,act,reload}:{sources:Source[];busy:string;a
  const save=async()=>{if(await manage(draft.id?"sourceUpdate":"sourceCreate",draft)){setOpen(false);setDraft(emptySource)}};
  return <div className="panel min-w-0">
   <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Внешние источники</h2><p className="hint">Добавляйте площадки, меняйте настройки и проверяйте сбор.</p></div><Button onClick={startCreate} disabled={saving||Boolean(busy)}><Plus size={16}/>Добавить источник</Button></div>
-  <Button className="mt-5" variant="secondary" disabled={saving||Boolean(busy)} onClick={()=>{void act("collect")}}><RefreshCw size={16}/>{busy==="collect"?"Проверяем…":"Проверить следующий"}</Button>
+  <Button className="mt-5" variant="secondary" disabled={saving||Boolean(busy)} onClick={()=>{void checkSource()}}><RefreshCw size={16} className={checking==="__next"?"animate-spin":""}/>{checking==="__next"?"Проверяем…":"Проверить следующий"}</Button>
+  {checking&&<div role="status" aria-live="polite" className="mt-4 rounded-xl border border-[#45606b] bg-[#223443] p-4"><p className="flex items-center gap-2 text-[#b9f1d4]"><RefreshCw size={16} className="animate-spin"/><span>Проверяем источник{checking!=="__next"?" «"+(sources.find(source=>source.id===checking)?.name||"")+"»":""}… · {elapsed} с</span></p><p className="mt-2 text-sm text-[#a9b9c0]">Проверка включает загрузку материалов и разбор новых публикаций с помощью ИИ. Это может занять несколько минут.</p>{elapsed>=60&&<p className="mt-2 text-sm text-[#e4c995]">Проверка ещё выполняется. Дождитесь результата, повторно нажимать кнопку не нужно.</p>}</div>}
+  {checkResult&&<p role="status" aria-live="polite" className="mt-4 rounded-xl border border-[#456956] p-3 text-sm text-[#b9f1d4]">{checkResult}</p>}
   {error&&<p className="mt-4 text-sm text-[#ffaaa0]" role="alert">{error}</p>}
-  <div className="mt-5 max-h-[32rem] overflow-y-auto space-y-0.5">{sources.map(source=><div key={source.id} className="border-t border-[#344655] py-3 min-w-0"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><a href={source.url} target="_blank" rel="noopener noreferrer" className="font-medium text-[#eaf4f2] hover:text-[#b9f1d4]">{source.name} ↗</a><p className="mt-1 text-xs text-[#a9b9c0] break-all">{source.url}</p><p className="mt-1 text-xs text-[#90a2ad]">{source.group_name} · {source.kind} · {sourceHealth(source,"ru").label}{source.error?` · ${source.error}`:""}</p></div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm"><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)||!source.enabled} onClick={()=>{void act("collectSource",{id:source.id})}}>Проверить</button><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>startEdit(source)}>Изменить</button><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>{void manage("sourceToggle",{id:source.id,enabled:!source.enabled})}}>{source.enabled?"Приостановить":"Возобновить"}</button><button className="text-[#ffaaa0] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>{setError("");setRemoving(source)}}>Удалить</button></div></div>)}</div>
+  <div className="mt-5 max-h-[32rem] overflow-y-auto space-y-0.5">{sources.map(source=><div key={source.id} className="border-t border-[#344655] py-3 min-w-0"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><a href={source.url} target="_blank" rel="noopener noreferrer" className="font-medium text-[#eaf4f2] hover:text-[#b9f1d4]">{source.name} ↗</a><p className="mt-1 text-xs text-[#a9b9c0] break-all">{source.url}</p><p className="mt-1 text-xs text-[#90a2ad]">{source.group_name} · {source.kind} · {sourceHealth(source,"ru").label}{source.error?` · ${source.error}`:""}</p></div></div><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm"><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)||!source.enabled} onClick={()=>{void checkSource(source.id)}}>{checking===source.id?<span className="inline-flex items-center gap-2"><RefreshCw size={14} className="animate-spin"/>Проверяем…</span>:"Проверить"}</button><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>startEdit(source)}>Изменить</button><button className="text-[#b9f1d4] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>{void manage("sourceToggle",{id:source.id,enabled:!source.enabled})}}>{source.enabled?"Приостановить":"Возобновить"}</button><button className="text-[#ffaaa0] disabled:opacity-50" disabled={saving||Boolean(busy)} onClick={()=>{setError("");setRemoving(source)}}>Удалить</button></div></div>)}</div>
   <Dialog open={open} onOpenChange={setOpen}>
    <DialogContent className="max-h-[90vh] overflow-y-auto bg-[#14202d] border-[#45606b]">
     <DialogHeader><DialogTitle>{draft.id?"Изменить источник":"Добавить источник"}</DialogTitle></DialogHeader>
