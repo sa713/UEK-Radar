@@ -1,3 +1,7 @@
+{
+	default_sni {$RADAR_IP}
+}
+
 https://{$RADAR_IP}:8443 {
 	tls {
 		issuer acme {
