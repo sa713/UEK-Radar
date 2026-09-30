@@ -65,7 +65,10 @@ async function discover(source:{url:string;kind:string}):Promise<Candidate[]>{
  if(!response.ok)throw new Error(`HTTP ${response.status}`);
  const raw=await response.text();
  if(source.kind==="json"&&raw.length>12000000)throw new Error("JSON источника превышает лимит 12 МБ");
- const content=source.kind==="json"?raw:raw.slice(0,700000);
+ const isXml=/^\s*(?:<\?xml\b|<rss\b|<feed\b)/i.test(raw);
+ if(isXml&&Buffer.byteLength(raw,"utf8")>12000000)throw new Error("RSS источника превышает лимит 12 МБ");
+ // XML must remain complete: truncation can split CDATA and closing tags.
+ const content=source.kind==="json"||source.kind==="rss"||isXml?raw:raw.slice(0,700000);
  if(source.kind==="json"){
   const data=JSON.parse(content) as {vulnerabilities?:Array<{cveID:string;vendorProject:string;product:string;dateAdded:string;shortDescription:string;notes:string}>};
   return (data.vulnerabilities||[]).slice(-8).reverse().map(v=>({url:`https://www.cisa.gov/known-exploited-vulnerabilities-catalog#${v.cveID}`,title:`${v.cveID}: ${v.vendorProject} ${v.product}`,text:`${v.shortDescription} ${v.notes||""}`,date:Date.parse(v.dateAdded)}));
